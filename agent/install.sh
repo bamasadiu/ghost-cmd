@@ -4,7 +4,9 @@
 # 🚀 GHOST CMD - AGENT INSTALLER
 # ==========================================
 # Auto-install, update, dan restart agent
+# Fixed untuk Python 3.11+ externally managed environment
 # Usage: sudo bash install.sh
+# Update: sudo bash install.sh update
 
 set -e
 
@@ -18,24 +20,52 @@ if [[ $EUID -ne 0 ]]; then
 fi
 
 # ==========================================
+# CHECK MODE: UPDATE or INSTALL
+# ==========================================
+MODE="${1:-install}"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+if [ "$MODE" = "update" ]; then
+    echo "🔄 UPDATE MODE - Pulling latest changes..."
+    cd "$SCRIPT_DIR"
+    
+    # Activate venv & update
+    if [ -d "venv" ]; then
+        source venv/bin/activate
+        git pull origin main
+        pip install --upgrade -r requirements.txt
+        deactivate
+    else
+        echo "⚠️ Virtual environment not found, running full install instead"
+    fi
+    
+    systemctl restart ghost-agent
+    echo "✅ Agent updated and restarted!"
+    exit 0
+fi
+
+# ==========================================
 # 1️⃣ SETUP VARIABLES
 # ==========================================
-AGENT_DIR="/opt/ghost-cmd/agent"
+AGENT_DIR="$SCRIPT_DIR"
 REPO_URL="https://github.com/umnodqib/ghost-cmd.git"
 SERVICE_NAME="ghost-agent"
 PYTHON_CMD=$(which python3 || which python)
+VENV_DIR="$AGENT_DIR/venv"
 
 echo "📦 Python: $PYTHON_CMD"
 echo "📁 Agent Dir: $AGENT_DIR"
+echo "📁 Virtual Env: $VENV_DIR"
 
 # ==========================================
 # 2️⃣ CREATE/UPDATE AGENT DIRECTORY
 # ==========================================
-if [ ! -d "$AGENT_DIR" ]; then
+if [ ! -d ".git" ]; then
     echo "📥 Clone repository..."
-    mkdir -p /opt/ghost-cmd
+    cd /opt/ghost-cmd 2>/dev/null || mkdir -p /opt/ghost-cmd
     cd /opt/ghost-cmd
-    git clone "$REPO_URL" .
+    git clone "$REPO_URL" agent
+    cd agent
 else
     echo "🔄 Update repository..."
     cd "$AGENT_DIR"
@@ -46,20 +76,41 @@ cd "$AGENT_DIR"
 echo "✅ Repository ready at $AGENT_DIR"
 
 # ==========================================
-# 3️⃣ INSTALL PYTHON DEPENDENCIES
+# 3️⃣ CREATE VIRTUAL ENVIRONMENT
+# ==========================================
+echo "🐍 Setting up Python virtual environment..."
+
+if [ ! -d "$VENV_DIR" ]; then
+    echo "📦 Creating new virtual environment..."
+    $PYTHON_CMD -m venv "$VENV_DIR"
+    echo "✅ Virtual environment created"
+else
+    echo "✅ Virtual environment already exists"
+fi
+
+# ==========================================
+# 4️⃣ ACTIVATE VENV & INSTALL DEPENDENCIES
 # ==========================================
 echo "📦 Installing Python dependencies..."
 
+# Source venv
+source "$VENV_DIR/bin/activate"
+
+# Upgrade pip
+"$VENV_DIR/bin/pip" install --upgrade pip wheel setuptools -q
+
+# Install requirements
 if [ -f "requirements.txt" ]; then
-    $PYTHON_CMD -m pip install --upgrade pip -q
-    $PYTHON_CMD -m pip install -r requirements.txt -q
-    echo "✅ Dependencies installed"
+    "$VENV_DIR/bin/pip" install -r requirements.txt -q
+    echo "✅ Dependencies installed successfully"
 else
     echo "⚠️ requirements.txt not found, skipping pip install"
 fi
 
+deactivate
+
 # ==========================================
-# 4️⃣ CONFIGURE ENVIRONMENT
+# 5️⃣ CONFIGURE ENVIRONMENT
 # ==========================================
 echo "⚙️ Configuring environment..."
 
@@ -80,9 +131,11 @@ else
 fi
 
 # ==========================================
-# 5️⃣ CREATE SYSTEMD SERVICE
+# 6️⃣ CREATE SYSTEMD SERVICE
 # ==========================================
 echo "🔧 Setting up systemd service..."
+
+PYTHON_VENV_BIN="$VENV_DIR/bin/python"
 
 cat > "/etc/systemd/system/${SERVICE_NAME}.service" << EOF
 [Unit]
@@ -94,7 +147,7 @@ Type=simple
 User=root
 WorkingDirectory=$AGENT_DIR
 EnvironmentFile=$AGENT_DIR/.env
-ExecStart=$PYTHON_CMD $AGENT_DIR/agent.py
+ExecStart=$PYTHON_VENV_BIN $AGENT_DIR/agent.py
 Restart=always
 RestartSec=10
 StandardOutput=journal
@@ -109,7 +162,7 @@ systemctl daemon-reload
 echo "✅ Systemd service created"
 
 # ==========================================
-# 6️⃣ CREATE DIRECTORIES
+# 7️⃣ CREATE DIRECTORIES
 # ==========================================
 echo "📁 Creating required directories..."
 mkdir -p "$AGENT_DIR/chrome_profiles"
@@ -118,7 +171,7 @@ chmod -R 755 "$AGENT_DIR"
 echo "✅ Directories ready"
 
 # ==========================================
-# 7️⃣ START/RESTART SERVICE
+# 8️⃣ START/RESTART SERVICE
 # ==========================================
 echo "🚀 Starting agent service..."
 
@@ -142,7 +195,7 @@ else
 fi
 
 # ==========================================
-# 8️⃣ DISPLAY INFO
+# 9️⃣ DISPLAY INFO
 # ==========================================
 echo ""
 echo "======================================"
@@ -155,10 +208,15 @@ echo "  Stop:     sudo systemctl stop $SERVICE_NAME"
 echo "  Restart:  sudo systemctl restart $SERVICE_NAME"
 echo "  Status:   sudo systemctl status $SERVICE_NAME"
 echo "  Logs:     sudo journalctl -u $SERVICE_NAME -f"
-echo "  Update:   cd $AGENT_DIR && sudo bash install.sh"
+echo "  Update:   cd $AGENT_DIR && sudo bash install.sh update"
 echo ""
 echo "📊 Agent running on: http://localhost:7860"
 echo "📡 Dashboard: $(grep DASHBOARD_URL $AGENT_DIR/.env | cut -d= -f2)"
 echo ""
 echo "🎯 Next step: Monitor logs dengan 'sudo journalctl -u $SERVICE_NAME -f'"
 echo "======================================"
+echo ""
+echo "📝 Virtual Environment Info:"
+echo "   Location: $VENV_DIR"
+echo "   Python:   $PYTHON_VENV_BIN"
+echo ""
