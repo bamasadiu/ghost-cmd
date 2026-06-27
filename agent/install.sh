@@ -1,90 +1,86 @@
 #!/bin/bash
-
-# ==========================================
-# 🚀 GHOST CMD - AGENT INSTALLER
-# ==========================================
-# Auto-install, update, dan restart agent
-# Usage: sudo bash install.sh
-
+# GHOST CMD - Agent Installer
+# Fixed untuk Python 3.11+ externally managed environment
+# Run on agent machine
 set -e
 
 echo "🚀 GHOST CMD Agent Installer"
-echo "======================================"
+echo "=================================="
 
 # Check if running as root
-if [[ $EUID -ne 0 ]]; then
-   echo "❌ Script harus dijalankan dengan sudo!"
-   exit 1
+if [ "$EUID" -ne 0 ]; then
+    echo "❌ Please run as root: sudo bash install.sh"
+    exit 1
 fi
 
 # ==========================================
-# 1️⃣ SETUP VARIABLES
+# CHECK MODE: UPDATE or INSTALL
 # ==========================================
-AGENT_DIR="/opt/ghost-cmd/agent"
-REPO_URL="https://github.com/umnodqib/ghost-cmd.git"
-SERVICE_NAME="ghost-agent"
-PYTHON_CMD=$(which python3 || which python)
+MODE="${1:-install}"
 
-echo "📦 Python: $PYTHON_CMD"
-echo "📁 Agent Dir: $AGENT_DIR"
-
-# ==========================================
-# 2️⃣ CREATE/UPDATE AGENT DIRECTORY
-# ==========================================
-if [ ! -d "$AGENT_DIR" ]; then
-    echo "📥 Clone repository..."
-    mkdir -p /opt/ghost-cmd
-    cd /opt/ghost-cmd
-    git clone "$REPO_URL" .
-else
-    echo "🔄 Update repository..."
-    cd "$AGENT_DIR"
+if [ "$MODE" = "update" ]; then
+    echo "🔄 UPDATE MODE - Pulling latest changes..."
+    cd "$(dirname "$0")"
     git pull origin main
-fi
-
-cd "$AGENT_DIR"
-echo "✅ Repository ready at $AGENT_DIR"
-
-# ==========================================
-# 3️⃣ INSTALL PYTHON DEPENDENCIES
-# ==========================================
-echo "📦 Installing Python dependencies..."
-
-if [ -f "requirements.txt" ]; then
-    $PYTHON_CMD -m pip install --upgrade pip -q
-    $PYTHON_CMD -m pip install -r requirements.txt -q
-    echo "✅ Dependencies installed"
-else
-    echo "⚠️ requirements.txt not found, skipping pip install"
+    systemctl restart ghost-agent
+    echo "✅ Agent updated and restarted!"
+    exit 0
 fi
 
 # ==========================================
-# 4️⃣ CONFIGURE ENVIRONMENT
+# 1. System Update
+# ==========================================
+echo "📦 Updating system packages..."
+apt-get update && apt-get upgrade -y
+apt-get install -y python3 python3-pip python3-venv git curl wget
+
+# ==========================================
+# 2. Setup Python Environment
+# ==========================================
+echo "🐍 Setting up Python virtual environment..."
+if [ ! -d "venv" ]; then
+    python3 -m venv venv
+fi
+source venv/bin/activate
+pip install --upgrade pip
+pip install -r requirements.txt
+
+# ==========================================
+# 3. Setup Data Directories
+# ==========================================
+echo "📁 Creating data directories..."
+mkdir -p chrome_profiles
+mkdir -p logs
+
+# ==========================================
+# 4. Configure Environment
 # ==========================================
 echo "⚙️ Configuring environment..."
 
 # Create .env file if not exists
-if [ ! -f "$AGENT_DIR/.env" ]; then
+if [ ! -f ".env" ]; then
     echo "📝 Creating .env file..."
     read -p "📡 Enter Dashboard URL [https://dashboard.jujulefek.qzz.io]: " DASHBOARD_URL
     DASHBOARD_URL="${DASHBOARD_URL:-https://dashboard.jujulefek.qzz.io}"
     
-    cat > "$AGENT_DIR/.env" << EOF
+    cat > ".env" << EOF
 DASHBOARD_URL=$DASHBOARD_URL
 AUTH_KEY=GHOST_SECRET_2026
 EOF
     echo "✅ .env created"
 else
     echo "✅ .env already exists"
-    cat "$AGENT_DIR/.env"
+    cat ".env"
 fi
 
 # ==========================================
-# 5️⃣ CREATE SYSTEMD SERVICE
+# 5. Create Systemd Service for Agent
 # ==========================================
-echo "🔧 Setting up systemd service..."
+echo "⚙️ Creating GHOST Agent systemd service..."
 
-cat > "/etc/systemd/system/${SERVICE_NAME}.service" << EOF
+SCRIPT_DIR="$(pwd)"
+
+cat > /etc/systemd/system/ghost-agent.service <<EOF
 [Unit]
 Description=GHOST CMD Agent
 After=network.target
@@ -92,73 +88,47 @@ After=network.target
 [Service]
 Type=simple
 User=root
-WorkingDirectory=$AGENT_DIR
-EnvironmentFile=$AGENT_DIR/.env
-ExecStart=$PYTHON_CMD $AGENT_DIR/agent.py
+WorkingDirectory=$SCRIPT_DIR
+EnvironmentFile=$SCRIPT_DIR/.env
+ExecStart=$SCRIPT_DIR/venv/bin/python3 agent.py
 Restart=always
 RestartSec=10
-StandardOutput=journal
-StandardError=journal
+Environment=PYTHONUNBUFFERED=1
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
-# Reload systemd
 systemctl daemon-reload
-echo "✅ Systemd service created"
+systemctl enable ghost-agent.service
 
 # ==========================================
-# 6️⃣ CREATE DIRECTORIES
+# 6. Start Services
 # ==========================================
-echo "📁 Creating required directories..."
-mkdir -p "$AGENT_DIR/chrome_profiles"
-mkdir -p "$AGENT_DIR/logs"
-chmod -R 755 "$AGENT_DIR"
-echo "✅ Directories ready"
+echo "🚀 Starting services..."
+systemctl start ghost-agent.service
 
-# ==========================================
-# 7️⃣ START/RESTART SERVICE
-# ==========================================
-echo "🚀 Starting agent service..."
-
-if systemctl is-active --quiet $SERVICE_NAME; then
-    echo "🔄 Restarting $SERVICE_NAME..."
-    systemctl restart $SERVICE_NAME
-else
-    echo "▶️ Starting $SERVICE_NAME..."
-    systemctl start $SERVICE_NAME
-    systemctl enable $SERVICE_NAME
-fi
-
-# Wait untuk service start
-sleep 2
-
-# Check status
-if systemctl is-active --quiet $SERVICE_NAME; then
-    echo "✅ Service is running!"
-else
-    echo "⚠️ Service might still be starting, check with: sudo systemctl status $SERVICE_NAME"
-fi
+sleep 3
 
 # ==========================================
-# 8️⃣ DISPLAY INFO
+# 7. Final Message
 # ==========================================
 echo ""
-echo "======================================"
-echo "✅ GHOST CMD Agent Installed!"
-echo "======================================"
-echo ""
-echo "📋 Commands:"
-echo "  Start:    sudo systemctl start $SERVICE_NAME"
-echo "  Stop:     sudo systemctl stop $SERVICE_NAME"
-echo "  Restart:  sudo systemctl restart $SERVICE_NAME"
-echo "  Status:   sudo systemctl status $SERVICE_NAME"
-echo "  Logs:     sudo journalctl -u $SERVICE_NAME -f"
-echo "  Update:   cd $AGENT_DIR && sudo bash install.sh"
-echo ""
+echo "✅ Installation Complete!"
+echo "=================================="
 echo "📊 Agent running on: http://localhost:7860"
-echo "📡 Dashboard: $(grep DASHBOARD_URL $AGENT_DIR/.env | cut -d= -f2)"
+echo "📡 Dashboard: $(grep DASHBOARD_URL .env | cut -d= -f2)"
 echo ""
-echo "🎯 Next step: Monitor logs dengan 'sudo journalctl -u $SERVICE_NAME -f'"
-echo "======================================"
+echo "🔧 Service Management:"
+echo "   systemctl status ghost-agent"
+echo ""
+echo "🔄 Restart commands:"
+echo "   systemctl restart ghost-agent"
+echo ""
+echo "📦 UPDATE CODE (ketika ada perubahan):"
+echo "   cd agent && sudo bash install.sh update"
+echo ""
+echo "📋 View Logs:"
+echo "   journalctl -u ghost-agent -f"
+echo ""
+echo "🎉 Selamat! Agent kamu sudah aktif."

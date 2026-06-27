@@ -214,7 +214,7 @@ def kill_processes():
                     p.kill()
                 except: pass
         except: pass
-             
+              
     time.sleep(2)
     
     try:
@@ -241,6 +241,119 @@ def clean_system():
 
     try: os.system("sync") 
     except: pass
+
+# ==========================================
+# ✅ BARU: TERIMA DATA DARI DASHBOARD & AUTO RUN
+# ==========================================
+def save_data_from_dashboard(data):
+    """
+    ✅ NEW: Terima dan simpan data dari dashboard
+    Support kedua format:
+    - Plain email format
+    - Email:password format
+    
+    KEMUDIAN AUTO TRIGGER LOGIN & LOOP
+    """
+    try:
+        format_type = data.get('format_type', 'plain_email')
+        
+        if format_type == 'email_password':
+            # Format: email:password
+            credentials = data.get('credentials', [])
+            
+            # Save ke credentials.json
+            with open('credentials.json', 'w') as f:
+                json.dump(credentials, f, indent=2)
+            
+            # Also save emails ke email.txt untuk backward compat
+            emails = [c['email'] for c in credentials]
+            with open('email.txt', 'w') as f:
+                f.write("\n".join(emails) + "\n")
+            
+            print(f"✅ [DATA] Received {len(credentials)} credentials (email:password format)", flush=True)
+        
+        else:
+            # Plain email format
+            emails = data.get('emails', [])
+            with open('email.txt', 'w') as f:
+                f.write("\n".join(emails) + "\n")
+            
+            # Clean credentials jika ada
+            if os.path.exists('credentials.json'):
+                os.remove('credentials.json')
+            
+            print(f"✅ [DATA] Received {len(emails)} emails (plain format)", flush=True)
+        
+        # Save links
+        links = data.get('links', [])
+        with open('link.txt', 'w') as f:
+            f.write("\n".join(links) + "\n")
+        
+        # Clean empty lines
+        os.system("sed -i '/^$/d' email.txt link.txt")
+        
+        print(f"✅ [DATA] Received {len(links)} links", flush=True)
+        
+        # ==========================================
+        # 🔥 NEW: AUTO TRIGGER LOGIN & LOOP
+        # ==========================================
+        emails_count = len(emails) if format_type == 'plain_email' else len(credentials)
+        links_count = len(links)
+        
+        # Cek apakah data valid
+        if emails_count > 0 and links_count > 0:
+            print(f"\n🔥 [AUTO-RUN] Data Valid! Email: {emails_count}, Links: {links_count}", flush=True)
+            print(f"🔥 [AUTO-RUN] Triggering LOGIN & LOOP...", flush=True)
+            
+            report_status("IDLE", f"Data Updated: {emails_count} emails, {links_count} links. Auto-running...")
+            
+            # Kill existing processes
+            kill_processes()
+            time.sleep(2)
+            
+            # === STEP 1: RUN LOGIN.PY ===
+            if not check_process(FILE_LOGIN) and not check_process(FILE_LOOP):
+                print(f"📍 [AUTO-RUN] STEP 1: Starting LOGIN process...", flush=True)
+                cmd_login = (
+                    f"xvfb-run -a --server-args='-screen 0 {SCREEN_LOGIN}' "
+                    f"{sys.executable} {FILE_LOGIN}"
+                )
+                threading.Thread(target=run_and_monitor, args=(cmd_login, "LOGIN"), daemon=True).start()
+                
+                # Wait LOGIN selesai sebelum run LOOP
+                print(f"⏳ [AUTO-RUN] Waiting for LOGIN to complete (max 60s)...", flush=True)
+                for i in range(60):
+                    if not check_process(FILE_LOGIN):
+                        print(f"✅ [AUTO-RUN] LOGIN completed!", flush=True)
+                        break
+                    time.sleep(1)
+                
+                time.sleep(5)  # Cooldown sebelum LOOP
+                
+                # === STEP 2: RUN LOOP.PY ===
+                if not check_process(FILE_LOOP):
+                    print(f"📍 [AUTO-RUN] STEP 2: Starting LOOP process...", flush=True)
+                    cmd_loop = (
+                        f"xvfb-run -a --server-args='-screen 0 {SCREEN_LOOP}' "
+                        f"{sys.executable} -u {FILE_LOOP}"
+                    )
+                    threading.Thread(target=run_and_monitor, args=(cmd_loop, "LOOP"), daemon=True).start()
+                    print(f"✅ [AUTO-RUN] LOOP started!", flush=True)
+                else:
+                    print(f"⚠️ [AUTO-RUN] LOOP already running, skipping...", flush=True)
+            else:
+                print(f"⚠️ [AUTO-RUN] Process already running, skipping auto-run", flush=True)
+                report_status("IDLE", "Process already busy")
+        else:
+            print(f"⚠️ [DATA] Data tidak valid. Email: {emails_count}, Links: {links_count}", flush=True)
+            report_status("IDLE", f"Invalid data: {emails_count} emails, {links_count} links")
+        
+        return True
+        
+    except Exception as e:
+        print(f"❌ [DATA] Error saving data: {e}", flush=True)
+        report_status("IDLE", f"Data Error: {str(e)}")
+        return False
 
 # ==========================================
 # 🔄 AUTO REGISTER
@@ -457,8 +570,38 @@ def status():
         "credentials_count": len(load_credentials())
     })
 
+@app.route('/update_data', methods=['POST'])
+def update_data():
+    """
+    ✅ NEW: Endpoint untuk menerima data dari dashboard
+    
+    FLOW:
+    1. Dashboard kirim email/links via POST /update_data
+    2. Agent terima & SAVE ke email.txt + link.txt
+    3. Agent AUTO TRIGGER login.py + loop.py
+    4. Agent report status ke dashboard
+    """
+    try:
+        data = request.get_json()
+        
+        if not data:
+            return jsonify({"error": "No data provided"}), 400
+        
+        # Simpan data & auto-run
+        success = save_data_from_dashboard(data)
+        
+        if success:
+            return jsonify({"status": "data_updated", "msg": "Data received, saved, and auto-running"})
+        else:
+            return jsonify({"error": "Failed to save data"}), 500
+            
+    except Exception as e:
+        print(f"❌ [UPDATE_DATA] Error: {e}", flush=True)
+        return jsonify({"error": str(e)}), 500
+
 @app.route('/start/login', methods=['POST'])
 def menu_1():
+    """Manual trigger login.py dari dashboard"""
     if check_process(FILE_LOGIN): return jsonify({"msg": "Login sudah jalan!", "status": "busy"})
     if check_process(FILE_LOOP): return jsonify({"msg": "Loop sedang jalan!", "status": "busy"})
     
@@ -472,6 +615,7 @@ def menu_1():
 
 @app.route('/start/loop', methods=['POST'])
 def menu_2():
+    """Manual trigger loop.py dari dashboard"""
     if check_process(FILE_LOOP): return jsonify({"msg": "Loop sudah jalan!", "status": "busy"})
     if check_process(FILE_LOGIN): return jsonify({"msg": "Login sedang jalan!", "status": "busy"})
 
@@ -493,6 +637,7 @@ def menu_3():
 
 @app.route('/stop', methods=['POST'])
 def menu_4():
+    """Stop semua process"""
     kill_processes()
     clean_system()
     open(LOG_FILE, 'w').close()
@@ -501,6 +646,7 @@ def menu_4():
 
 @app.route('/clean_ram', methods=['POST'])
 def menu_7():
+    """Clean system & optimize RAM"""
     clean_system()
     mem = psutil.virtual_memory()
     return jsonify({"msg": "RAM Optimized", "free": f"{mem.available // 1048576} MB"})
