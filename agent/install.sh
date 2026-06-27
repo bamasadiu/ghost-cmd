@@ -54,50 +54,40 @@ mkdir -p logs
 
 
 # Auto start temporary tunnel jika belum ada
-# ==========================================
-# 4. Configure Environment (AUTO TUNNEL IMPROVED)
+# =====# ==========================================
+# 4. Configure Environment (FULL AUTO - NO MANUAL INPUT)
 # ==========================================
 echo "⚙️ Configuring environment..."
 
-# Kill tunnel lama jika ada
-pkill -f "cloudflared.*trycloudflare" 2>/dev/null || true
+# Kill tunnel lama
+pkill -f cloudflared 2>/dev/null || true
 sleep 2
 
 # Jalankan tunnel di background
-echo "🚀 Menjalankan cloudflared tunnel..."
+echo "🚀 Menjalankan Cloudflare Tunnel otomatis..."
 nohup cloudflared tunnel --url http://localhost:7860 > tunnel.log 2>&1 &
-sleep 5   # Beri waktu lebih lama
+TUNNEL_PID=$!
 
-# Coba ambil URL (beberapa cara)
+# Tunggu dan coba ambil URL (max 15 detik)
+echo "⏳ Menunggu URL tunnel..."
 AGENT_PUBLIC_URL=""
-for i in {1..10}; do
-    if grep -q "trycloudflare.com" tunnel.log; then
+for i in {1..15}; do
+    if grep -q "trycloudflare.com" tunnel.log 2>/dev/null; then
         AGENT_PUBLIC_URL=$(grep -o 'https://[^ ]*\.trycloudflare\.com' tunnel.log | head -n 1)
         if [ -n "$AGENT_PUBLIC_URL" ]; then
+            echo "✅ Auto detect berhasil: $AGENT_PUBLIC_URL"
             break
         fi
     fi
-    sleep 2
+    sleep 1
 done
 
 if [ -z "$AGENT_PUBLIC_URL" ]; then
-    echo "⚠️ Gagal auto detect URL tunnel."
-    read -p "🔗 Masukkan manual Public URL Agent (https://....trycloudflare.com): " AGENT_PUBLIC_URL
-    AGENT_PUBLIC_URL="${AGENT_PUBLIC_URL:-http://localhost:7860}"
-else
-    echo "✅ Auto detect berhasil: $AGENT_PUBLIC_URL"
+    echo "⚠️ Gagal auto detect. Pakai fallback localhost."
+    AGENT_PUBLIC_URL="http://localhost:7860"
 fi
 
-# Ambil URL dari log tunnel
-AGENT_PUBLIC_URL=$(grep -o 'https://[^ ]*\.trycloudflare\.com' tunnel.log | head -n 1)
-
-if [ -z "$AGENT_PUBLIC_URL" ]; then
-    echo "⚠️ Gagal mendeteksi URL tunnel otomatis."
-    read -p "🔗 Masukkan manual Public URL Agent: " AGENT_PUBLIC_URL
-    AGENT_PUBLIC_URL="${AGENT_PUBLIC_URL:-http://localhost:7860}"
-else
-    echo "✅ Auto detect TryCloudflare URL: $AGENT_PUBLIC_URL"
-fi
+echo "✅ .env dibuat otomatis dengan URL: $AGENT_PUBLIC_URL"
 
 # Create .env
 if [ ! -f ".env" ]; then
