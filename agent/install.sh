@@ -52,6 +52,18 @@ echo "📁 Creating data directories..."
 mkdir -p chrome_profiles
 mkdir -p logs
 
+# ==========================================
+# 2.5 Install Cloudflared (AUTO)
+# ==========================================
+echo "☁️  Installing Cloudflared..."
+if ! command -v cloudflared &> /dev/null; then
+    echo "📥 Downloading cloudflared..."
+    wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -O /usr/local/bin/cloudflared
+    chmod +x /usr/local/bin/cloudflared
+    echo "✅ Cloudflared installed"
+else
+    echo "✅ Cloudflared already installed"
+fi
 
 # Auto start temporary tunnel jika belum ada
 # =====# ==========================================
