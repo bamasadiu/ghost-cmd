@@ -52,17 +52,40 @@ echo "📁 Creating data directories..."
 mkdir -p chrome_profiles
 mkdir -p logs
 
+
+# Auto start temporary tunnel jika belum ada
 # ==========================================
-# 4. Configure Environment (AUTO TRY CLOUDFLARE)
+# 4. Configure Environment (AUTO TUNNEL IMPROVED)
 # ==========================================
 echo "⚙️ Configuring environment..."
 
-# Auto start temporary tunnel jika belum ada
-echo "🌐 Memulai Cloudflare Tunnel otomatis..."
-if ! pgrep -f "cloudflared.*trycloudflare" > /dev/null; then
-    echo "🚀 Menjalankan cloudflared tunnel..."
-    nohup cloudflared tunnel --url http://localhost:7860 > tunnel.log 2>&1 &
-    sleep 4  # Tunggu tunnel aktif
+# Kill tunnel lama jika ada
+pkill -f "cloudflared.*trycloudflare" 2>/dev/null || true
+sleep 2
+
+# Jalankan tunnel di background
+echo "🚀 Menjalankan cloudflared tunnel..."
+nohup cloudflared tunnel --url http://localhost:7860 > tunnel.log 2>&1 &
+sleep 5   # Beri waktu lebih lama
+
+# Coba ambil URL (beberapa cara)
+AGENT_PUBLIC_URL=""
+for i in {1..10}; do
+    if grep -q "trycloudflare.com" tunnel.log; then
+        AGENT_PUBLIC_URL=$(grep -o 'https://[^ ]*\.trycloudflare\.com' tunnel.log | head -n 1)
+        if [ -n "$AGENT_PUBLIC_URL" ]; then
+            break
+        fi
+    fi
+    sleep 2
+done
+
+if [ -z "$AGENT_PUBLIC_URL" ]; then
+    echo "⚠️ Gagal auto detect URL tunnel."
+    read -p "🔗 Masukkan manual Public URL Agent (https://....trycloudflare.com): " AGENT_PUBLIC_URL
+    AGENT_PUBLIC_URL="${AGENT_PUBLIC_URL:-http://localhost:7860}"
+else
+    echo "✅ Auto detect berhasil: $AGENT_PUBLIC_URL"
 fi
 
 # Ambil URL dari log tunnel
