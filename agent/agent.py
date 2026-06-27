@@ -356,21 +356,28 @@ def save_data_from_dashboard(data):
         return False
 
 # ==========================================
-# 🔄 AUTO REGISTER
+# 🔄 AUTO REGISTER (FULL PATCH - SUPPORT TRY CLOUDFLARE)
 # ==========================================
 def auto_register():
     global CURRENT_SLOT
     print("⏳ [INIT] Menyiapkan URL Bot...", flush=True)
     time.sleep(3)
 
+    # === PATCH UTAMA: Deteksi Public URL TryCloudflare ===
     hf_host = os.environ.get("SPACE_HOST")
-    
+    env_url = os.environ.get("AGENT_PUBLIC_URL")
+
     if hf_host:
         bot_url = f"https://{hf_host}"
-        print(f"✅ [INIT] Berjalan di Hugging Face! URL: {bot_url}", flush=True)
+        print(f"✅ [INIT] Hugging Face Space: {bot_url}", flush=True)
+    elif env_url and ("trycloudflare.com" in env_url or "cloudflare" in env_url):
+        bot_url = env_url
+        print(f"✅ [INIT] Menggunakan TryCloudflare / Tunnel URL: {bot_url}", flush=True)
     else:
         bot_url = "http://localhost:7860"
-        print(f"⚠️ [INIT] SPACE_HOST tidak ditemukan. Menggunakan fallback: {bot_url}", flush=True)
+        print(f"⚠️ [INIT] Tidak ada AGENT_PUBLIC_URL. Pakai localhost (push data mungkin gagal)", flush=True)
+        print(f"   → Jalankan: cloudflared tunnel --url http://localhost:7860", flush=True)
+        print(f"   → Lalu set Environment AGENT_PUBLIC_URL di service ghost-agent", flush=True)
 
     try:
         my_ip = requests.get('https://api.ipify.org', timeout=10, verify=False).text.strip()
@@ -381,7 +388,8 @@ def auto_register():
     
     while not registered:
         try:
-            print(f"📡 [INIT] Register ke Dashboard: {DASHBOARD_URL} ...", flush=True)
+            print(f"📡 [INIT] Register ke Dashboard dengan URL: {bot_url}", flush=True)
+            
             resp = requests.post(
                 f"{DASHBOARD_URL}/api/register", 
                 json={"url": bot_url, "ip": my_ip}, 
@@ -395,35 +403,29 @@ def auto_register():
                 locker = data.get('locker', {})
 
                 print(f"\n✅ [INIT] TERDAFTAR DI SLOT: {CURRENT_SLOT}", flush=True)
+                print(f"🌐 Agent Public URL: {bot_url}", flush=True)
                 
-                # ✅ NEW: Handle both plain email dan email:password format
+                # Handle data dari dashboard (email:password support)
                 format_type = locker.get('format_type', 'plain_email')
                 
                 if format_type == 'email_password':
-                    # Email:password format - save ke credentials.json
                     credentials = locker.get('credentials', [])
                     with open('credentials.json', 'w') as f:
                         json.dump(credentials, f, indent=2)
-                    
-                    # Also save emails untuk backward compatibility
-                    emails = locker.get('emails', [])
+                    emails = [c.get('email', '') for c in credentials]
                     with open('email.txt', 'w') as f:
                         f.write("\n".join(emails) + "\n")
-                    
-                    print(f"✅ [INIT] Saved {len(credentials)} credentials (email:password format)", flush=True)
-                
+                    print(f"✅ [INIT] Saved {len(credentials)} credentials (email:password)", flush=True)
                 else:
-                    # Plain email format
                     emails = locker.get('emails', [])
                     with open('email.txt', 'w') as f:
                         f.write("\n".join(emails) + "\n")
-                    
-                    print(f"✅ [INIT] Saved {len(emails)} emails (plain format)", flush=True)
+                    print(f"✅ [INIT] Saved {len(emails)} emails", flush=True)
                 
                 os.system("sed -i '/^$/d' email.txt")
 
-                ack_success = False
-                for i in range(5): 
+                # ACK ke dashboard
+                for i in range(5):
                     try:
                         ack_resp = requests.post(
                             f"{DASHBOARD_URL}/api/ack", 
@@ -433,26 +435,21 @@ def auto_register():
                         )
                         if ack_resp.status_code == 200:
                             print("✅ [ACK] Sinkronisasi Berhasil!", flush=True)
-                            ack_success = True
-                            break 
+                            break
                     except:
                         time.sleep(1)
                 
-                if not ack_success:
-                    print("💀 [FATAL] Gagal ACK. Ulangi Register...", flush=True)
-                    CURRENT_SLOT = None
-                    continue 
-
                 registered = True
                 return True
 
             elif resp.status_code == 503:
-                print("⛔ [INIT] PANEL PENUH! Retry 10s...", flush=True)
+                print("⛔ [INIT] Panel penuh, retry...", flush=True)
         except Exception as e:
-            print(f"❌ [INIT] Gagal koneksi: {e}", flush=True)
+            print(f"❌ [INIT] Gagal register: {e}", flush=True)
             resolve_domain_dynamic()
         
-        if not registered: time.sleep(10)
+        if not registered:
+            time.sleep(10)
 
 # ==========================================
 # 🤖 AUTOMATION FLOW
