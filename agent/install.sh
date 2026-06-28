@@ -34,6 +34,16 @@ echo "📦 Updating system packages..."
 apt-get update && apt-get upgrade -y
 apt-get install -y python3 python3-pip python3-venv git curl wget
 apt-get install -y xvfb
+wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | apt-key add -
+echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" > /etc/apt/sources.list.d/google-chrome.list
+apt-get update
+apt-get install -y google-chrome-stable
+
+# Install pyautogui + dependencies
+pip install pyautogui pillow mouseinfo
+
+# Install tkinter (sudah disarankan sebelumnya)
+sudo apt-get install -y python3-tk python3-dev
 # ==========================================
 # 2. Setup Python Environment
 # ==========================================
